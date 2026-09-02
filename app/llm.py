@@ -23,7 +23,7 @@ from google.genai import types
 
 load_dotenv()
 
-MODEL = "Gemini 3.5 Flash Lite"
+MODEL = "gemini-3.5-flash-lite"
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 

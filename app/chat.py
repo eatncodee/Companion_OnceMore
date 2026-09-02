@@ -26,7 +26,7 @@ def main():
     db.init_db()
     vector_store.get_collection()  # ensure collection exists
 
-    persona_block = render_persona_block()
+    persona_block = persona.render_persona_block()
     history = []
     turn = get_turn_number()
 

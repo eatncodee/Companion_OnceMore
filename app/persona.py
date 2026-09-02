@@ -46,7 +46,7 @@ PERSONA = {
 def render_persona_block() -> str:
     """Render the persona as a static system-prompt block."""
     lines = [
-        f"You are {PERSONA['name']}.",
+        f"{PERSONA['name']}",
         "",
         f"Backstory: {PERSONA['backstory']}",
         "",
