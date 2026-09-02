@@ -14,9 +14,9 @@ be close to anything and skip straight to a plain insert, which keeps the
 average cold-path cost low (extraction call only, no judge call).
 """
 
-import db
-import vector_store
-import llm
+from . import db
+from . import vector_store
+from . import llm
 
 SIMILARITY_THRESHOLD = 0.35  # chroma cosine distance; lower = more similar
 RETRIEVAL_K = 6

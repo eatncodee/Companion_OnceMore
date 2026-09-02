@@ -17,10 +17,13 @@ else in the pipeline depends on which LLM backs these three functions.
 """
 
 import os
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-MODEL = "gemini-2.5-flash"
+load_dotenv()
+
+MODEL = "Gemini 3.5 Flash Lite"
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 

@@ -79,7 +79,6 @@ def save_fact(subject, predicate, obj, text, category, created_turn,
         )
     return fact_id
 
-
 def supersede_fact(old_fact_id: str, new_fact_id: str, reason: str, path: str = DB_PATH):
     with get_conn(path) as conn:
         conn.execute(

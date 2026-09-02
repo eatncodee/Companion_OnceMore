@@ -8,11 +8,12 @@ process memory; data/memory.db and data/chroma/ are the source of truth.
 
 import os
 import threading
-import db
-import vector_store
-import memory_pipeline
-from persona import render_persona_block
-import llm
+from dotenv import load_dotenv
+from . import db
+from . import vector_store
+from . import memory_pipeline
+from . import persona
+from . import llm
 
 
 def get_turn_number() -> int:
