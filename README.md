@@ -1,85 +1,91 @@
 # Companion-AI Core Loop
 
-A small CLI AI companion prototype focused on the assessment's primary problem: **persistent memory + long-range personality consistency**.
+A small CLI AI companion prototype focused on persistent memory, relevant retrieval,
+state updates, contradiction handling, and long-range persona consistency.
 
-The companion is **Mira**, a warm, dry, opinionated character with a stable backstory. User memory lives outside the model context, is retrieved selectively, and is updated rather than blindly accumulated.
+The system uses a structured memory store as its source of truth and a semantic
+index for recall. The companion persona is kept separate from user memory so that
+remembered user facts do not silently change the character's identity or behavior.
 
-> **Scope:** This project intentionally focuses on the memory/persona core loop. UI, auth, voice, images, multi-user support, production-scale infrastructure, and latency optimization are out of scope for this assessment.
+---
 
-## Assessment mapping
+## Features
 
-| Assessment requirement | Implementation |
-|---|---|
-| Persist across sessions | SQLite-backed facts survive process restart |
-| Extract + store memory | Structured LLM extraction with canonical predicates |
-| Retrieve relevantly | Chroma semantic retrieval + active-state filtering |
-| Update / contradiction handling | Canonical `(subject, predicate)` slots + LLM relationship judge |
-| Don't duplicate facts | Explicit `duplicate` outcome |
-| Stay in character | Static Mira persona injected separately on every turn |
-| Evaluation harness | Planned as the next stage after core-loop stabilization |
+- Persistent memory across process restarts
+- Structured memory extraction from user messages
+- Canonical `(subject, predicate, object)` memory representation
+- Exact slot-based memory resolution
+- Semantic retrieval as a fallback for wording/extraction variation
+- Duplicate detection
+- State updates through fact supersession
+- Contradiction logging
+- Selective memory retrieval instead of injecting the entire store
+- Stable, application-owned companion persona
+- Manual 50+ turn memory and persona evaluation
 
-The assessment explicitly makes the core loop the primary deliverable and treats evaluation as an optional stretch goal.
+---
 
 ## Run it
 
-This repository uses `uv` and exposes a `companion` CLI entry point.
+### Requirements
 
-### Install
+- Python 3.12+
+- `uv`
+- Gemini API key
 
-```bash
-uv sync
-```
+### Setup
 
-### Configure Gemini
-
-Create `.env` in the project root:
+Create a `.env` file in the project root:
 
 ```env
 GEMINI_API_KEY=your_api_key_here
 ```
 
-Then:
+Install dependencies:
+
+```bash
+uv sync
+```
+
+Run:
 
 ```bash
 uv run companion
 ```
 
-On the first run, Chroma may download its local embedding model. It is cached locally; the embedding index does not need a separate embedding API key.
+On first run, Chroma may download its local embedding model. It is cached locally
+and does not require a separate vector database server.
 
-### Verify persistence
-
-Tell Mira a durable fact, exit with `Ctrl+C`, restart, and ask about it again.
-
-Generated state lives in:
+The application creates its persistent state under:
 
 ```text
-data/memory.db
-
-data/chroma/
+data/
+├── memory.db
+└── chroma/
 ```
-
-The in-process conversation history is short-term context only; it is **not** the long-term memory source of truth.
 
 ---
 
-# Architecture
+## Architecture
 
 ```text
-                         USER MESSAGE
+                         User message
                               │
                               ▼
                     ┌──────────────────┐
-                    │ Memory Retriever │
+                    │ Memory Retrieval  │
+                    │                  │
+                    │ Chroma semantic  │
+                    │ + SQLite filter  │
                     └────────┬─────────┘
-                             │
-                    relevant active facts
                              │
                              ▼
                     ┌──────────────────┐
-                    │  Context Builder │
+                    │ Context Builder  │
                     │                  │
-                    │ Mira persona     │
-                    │ + memory block   │
+                    │ Persona          │
+                    │ + relevant       │
+                    │   memories       │
                     │ + recent history │
                     └────────┬─────────┘
                              │
@@ -87,50 +93,39 @@ The in-process conversation history is short-term context only; it is **not** th
                            Gemini
                              │
                              ▼
-                       Mira response
+                      Companion reply
                              │
                              ▼
-                    ┌──────────────────┐
-                    │ Memory Extractor │
-                    └────────┬─────────┘
-                             │
-                     canonical facts
+                    Memory extraction
                              │
                              ▼
-                  ┌────────────────────────┐
-                  │ Memory Resolution      │
-                  │                        │
-                  │ 1. exact slot lookup   │
-                  │ 2. semantic fallback   │
-                  │ 3. relationship judge │
-                  └────────────┬───────────┘
-                               │
-                ┌──────────────┼──────────────┐
-                ▼              ▼              ▼
-             duplicate       update      contradiction
-                │              │              │
-              ignore       supersede     supersede + log
-                               │              │
-                               └──────┬───────┘
-                                      ▼
-                              SQLite + Chroma
+                 Canonical fact normalization
+                             │
+                             ▼
+                 Exact slot lookup first
+                       /            \
+                     found          not found
+                       │                │
+                       ▼                ▼
+                  LLM judge       Semantic fallback
+                       │                │
+                       └────────┬───────┘
+                                ▼
+                 duplicate / update / contradiction /
+                              unrelated
+                                │
+                ┌───────────────┼───────────────┐
+                ▼               ▼               ▼
+             ignore         supersede          insert
+                              old fact
+                           + log if needed
 ```
-
-The design deliberately separates four concerns:
-
-**Conversation history** is short-term context for the current chat session.
-
-**SQLite** is the canonical long-term memory state: structured facts, current/superseded state, turn metadata, and contradiction audit records.
-
-**Chroma** is only the semantic retrieval index. A Chroma result is joined back to SQLite and discarded if the fact is no longer active.
-
-**Persona** is application-owned static state. It is never derived from user memories.
 
 ---
 
-# Memory model
+## Memory model
 
-A memory is represented as:
+Each durable memory is represented as:
 
 ```text
 (subject, predicate, object)
@@ -142,30 +137,32 @@ For example:
 (user, favorite_language, Rust)
 (user, learning_topic, distributed systems)
 (user, current_location, Mumbai)
+(user, relationship_status, married)
 ```
 
-The extractor uses a small canonical predicate vocabulary such as:
+SQLite is the canonical source of truth for these facts.
 
-```text
-name
-current_location
-current_job
-current_employer
-relationship_status
-favorite_language
-current_project
-learning_topic
-goal
-plan
-preference
-interest
-opinion
-relationship
-event
-other
-```
+Each fact also retains metadata such as:
 
-The important design decision is that **slot identity is structural**.
+- creation turn
+- creation time
+- category
+- whether it is time-bound
+- superseded-by relationship
+- supersession reason
+
+Superseded facts are retained for history and auditing, but are not treated as
+active memories during retrieval.
+
+---
+
+## Why the memory pipeline is layered
+
+The system deliberately separates three concerns:
+
+### 1. Structural identity
+
+The canonical `(subject, predicate)` pair represents the underlying memory slot.
 
 For example:
 
@@ -174,254 +171,269 @@ For example:
 (user, favorite_language, Rust)
 ```
 
-share the same slot. That lets the system detect a state change without depending on embedding distance.
-
----
-
-# Why the pipeline is layered
-
-The first draft used embedding similarity as the gate for deciding whether a new fact should be compared with an existing fact. That is unreliable for contradictions because two statements can describe the same state with very different wording.
-
-The current system separates three jobs:
-
-### 1. Structural identity resolution
-
-First ask:
-
-> Does an active fact already exist with the same canonical `(subject, predicate)`?
-
-For known slots, this is the primary identity mechanism.
-
-### 2. Semantic recall widening
-
-If no exact slot exists, Chroma finds semantically close candidates. This is a fallback for wording variation or extraction drift rather than the primary contradiction detector.
-
-### 3. Relationship judgment
-
-Only a small candidate set reaches the LLM judge:
-
-```text
-duplicate       → keep existing fact
-update          → new fact supersedes old fact
-contradiction   → new fact supersedes old fact + log
-unrelated       → keep both
-```
-
-This avoids both extremes: relying entirely on embeddings, or making an LLM compare every new fact against the entire memory store.
-
----
-
-# Example: Python → Rust
-
-Turn 1:
-
-```text
-My favorite programming language is Python.
-```
-
-Stored as:
-
-```text
-(user, favorite_language, Python)
-```
-
-Later:
-
-```text
-Actually Rust is my favorite programming language.
-```
-
-The exact slot matches:
+belong to the same logical slot:
 
 ```text
 (user, favorite_language)
 ```
 
-The relationship judge determines that the value changed, so the database becomes:
+This means updates do not depend on embedding similarity.
+
+### 2. Semantic fallback
+
+When no exact slot exists, Chroma is used to find semantically similar existing
+memories.
+
+This provides recall coverage when wording varies or extraction does not map
+cleanly to an existing slot.
+
+### 3. Relationship judgment
+
+The LLM judge is only called for a small set of candidate pairs.
+
+It classifies the relationship as:
+
+```text
+duplicate
+update
+contradiction
+unrelated
+```
+
+This keeps the LLM from comparing every new fact against the entire memory store.
+
+---
+
+## Duplicate, update, and contradiction handling
+
+### Duplicate
+
+Example:
+
+```text
+"I am currently learning distributed systems."
+"I am learning distributed systems."
+```
+
+The second statement represents the same underlying fact.
+
+Result:
+
+```text
+duplicate → keep existing fact
+```
+
+No new active memory is created.
+
+### Update
+
+Example:
+
+```text
+(user, favorite_language, Python)
+                 ↓
+(user, favorite_language, Rust)
+```
+
+The logical slot is unchanged, but its current value has changed.
+
+Result:
 
 ```text
 Python → superseded
 Rust   → active
 ```
 
-The old row remains for audit/evaluation, but active retrieval exposes only Rust.
+### Contradiction
 
-This directly addresses the assessment requirement that an updated/contradicted fact should replace or retire the previous state rather than simply coexist with it.
+When two incompatible claims refer to the same underlying state, the newer
+claim becomes the active state and the old state is retained as historical data.
+
+Result:
+
+```text
+old fact → superseded
+new fact → active
+contradiction → logged
+```
+
+### Unrelated
+
+Semantically similar statements that refer to different underlying facts are
+allowed to coexist.
 
 ---
 
-# Duplicate vs update vs contradiction
+## Storage decisions
 
-These are intentionally separate outcomes.
+### SQLite
 
-**Duplicate**
+SQLite is the canonical memory store because structured state needs to be:
 
-```text
-I am learning distributed systems.
-I am currently learning distributed systems.
-```
+- persistent
+- queryable
+- inspectable
+- easy to update transactionally
+- independent of the embedding index
 
-→ same meaning; do not create another memory.
+SQLite answers:
 
-**Update**
+> What does the system currently believe?
 
-```text
-I live in Delhi.
-I live in Mumbai now.
-```
+### Chroma
 
-→ same underlying state, new value; supersede the old fact.
+Chroma is used only for semantic retrieval.
 
-**Contradiction**
+Every Chroma entry uses the corresponding SQLite fact ID, allowing the system
+to retrieve a candidate semantically and then resolve its authoritative state
+through SQLite.
 
-```text
-I hate coffee.
-I love coffee.
-```
+Chroma answers:
 
-→ incompatible current claims; supersede the old fact and record the event in `contradiction_log`.
+> Which memories might be relevant to this message?
 
-**Unrelated**
+### Conversation history
 
-```text
-I like Python.
-I like hiking.
-```
+Recent conversation history is kept in the LLM context for short-term coherence.
+It is separate from long-term memory.
 
-→ keep both.
+### Persona
 
-The `contradiction_log` is intentionally an audit trail; the prototype uses a simple newest-wins policy rather than adding a clarification dialogue.
+The companion persona is static application-owned state and is injected separately
+from user memories.
 
----
-
-# Persona consistency
-
-`persona.py` contains Mira's stable:
-
-- backstory
-- personality traits
-- stated opinions
-- speech patterns
-
-User memory is inserted into a **separate memory block**.
-
-Conceptually:
-
-```text
-PERSONA
-  → who Mira is
-  → what Mira believes
-  → how Mira speaks
-
-MEMORY
-  → what the user told Mira
-  → what is currently true
-  → what is relevant to this turn
-```
-
-This separation is a deliberate guard against user-specific facts becoming accidental persona instructions.
-
-It also gives the evaluation stage explicit invariants to test over 50+ turns, as requested by the assessment.
+This prevents a user memory from silently becoming a change to the companion's
+personality.
 
 ---
 
-# Storage decisions
-
-### SQLite instead of MongoDB
-
-MongoDB was considered because facts are document-shaped and easy to version. It was dropped because this is a single-user CLI prototype. SQLite provides durable local storage with no database server to configure.
-
-### Chroma for semantic retrieval
-
-Chroma provides a local persistent semantic index with minimal setup. SQLite remains canonical; Chroma answers only **which memories look relevant**.
-
-### No Redis
-
-Redis was considered for caching/session infrastructure in an earlier scale-oriented design. Multi-user support, production infrastructure, and load handling are explicitly out of scope, so it added complexity without helping the core assessment problem.
-
----
-
-# What was tried and abandoned
+## What was tried and abandoned
 
 ### Embedding similarity as the primary conflict gate
 
-**Abandoned.** Contradictory facts can be poorly correlated semantically. Structural slots now provide the primary identity check, with embeddings retained as a fallback.
+The initial design relied on embedding distance to determine whether a new fact
+was similar enough to an existing fact before asking the LLM to judge it.
 
-### LLM comparison against every stored memory
-
-**Abandoned.** This would create unnecessary model calls as memory grows. Exact slot lookup and bounded semantic candidate retrieval reduce the comparison set first.
-
-### Background fire-and-forget memory writes
-
-**Abandoned.** The initial draft wrote memory on a daemon thread after printing the reply. That created a shutdown race where a process could exit before a memory write completed. Since production latency optimization is explicitly out of scope, the current prototype favors durable correctness over that optimization.
-
-### MongoDB + Redis
-
-**Abandoned.** The initial architecture assumed more infrastructure than this assessment needs. The local SQLite + Chroma design is easier to run, inspect, and explain.
-
-### Conversational contradiction clarification
-
-**Deferred.** A production companion might ask the user which conflicting statement is correct. For this prototype, newest-wins keeps the core loop simple while preserving an audit record when a contradiction is explicitly classified.
-
----
-
-# Known limitations
-
-1. **Extraction is still model-dependent.** Canonical predicates reduce drift, but an LLM can still extract the wrong fact.
-2. **Relationship judgment is model-dependent.** Edge cases between duplicate/update/contradiction/unrelated still need evaluation.
-3. **Newest-wins is intentionally simple.** A real product could use confidence, evidence/source weighting, or user confirmation.
-4. **The system is single-user.** No auth, billing, multi-user state isolation, or production infrastructure is implemented because those are outside scope.
-5. **No evaluation results are included yet.** The core storage model is already instrumented for evaluation through active facts, supersession chains, and the contradiction log.
-
----
-
-# Evaluation plan
-
-Once the core loop is frozen, the next step is a lightweight evaluation harness built from deliberately challenging conversations.
-
-### Memory recall
-
-Introduce a fact early, add many unrelated turns, then ask for it later.
-
-### Contradiction/update
-
-Introduce a fact, change it much later, and verify the new value is active while the old value is superseded.
-
-### Semantic recall
-
-Use a paraphrased question rather than repeating the original wording and verify the correct memory is still retrieved.
-
-### Persona consistency
-
-Run 50+ turns that repeatedly exercise stable Mira properties such as her tea/coffee preference, literature-teacher background, Gremlin, dry humor, and willingness to push back rather than blindly agree.
-
-### Metrics
-
-Report pass/fail rates, representative failures, and which category is weakest. An LLM-as-judge is a reasonable option for response-level personality evaluation, but its rubric and limitations should be documented.
-
-An optional oracle baseline can compare the system against a strong model given the full memory store, as suggested by the assessment.
-
----
-
-# Repository layout
+This failed for state changes such as:
 
 ```text
-Companion/
+Python → Rust
+Delhi → Mumbai
+single → married
+```
+
+because contradictory or updated statements do not always produce sufficiently
+similar embeddings.
+
+The pipeline was changed so that exact canonical slot lookup is the primary
+identity mechanism, with semantic retrieval kept as a fallback.
+
+### LLM comparison against every stored fact
+
+Comparing every new memory against the entire memory store would increase cost
+with memory size and introduce unnecessary LLM calls.
+
+The current architecture limits the judge to structurally matched or
+semantically close candidate facts.
+
+### Fire-and-forget background memory writes
+
+The first version persisted memory in a daemon background thread after responding.
+
+That improved perceived responsiveness but introduced a correctness risk: the
+process could exit before the memory write completed.
+
+The current prototype prioritizes durable state correctness and completes memory
+processing before accepting the next input.
+
+---
+
+## Persona design
+
+Mira is defined as a stable application-owned persona with:
+
+- a fixed backstory
+- personality traits
+- stated opinions
+- speech patterns
+- stable behavioral constraints
+
+Examples include:
+
+- former high-school literature teacher
+- full-time writer
+- cat named Gremlin
+- prefers tea to coffee
+- skeptical of productivity culture
+- values quiet and "dead time"
+- direct and willing to disagree
+- avoids generic assistant phrasing
+
+These properties are kept separate from user memory so they can be evaluated for
+drift independently.
+
+---
+
+## Evaluation
+
+A manual evaluation conversation is included at:
+
+```text
+tests/conversations/manual_memory_persona_evaluation.md
+```
+
+The manual evaluation covers:
+
+- persistence across process restarts
+- structured memory extraction
+- exact-slot updates
+- duplicate handling
+- long-range recall
+- paraphrased recall
+- retrieval of the current state rather than superseded state
+- persona consistency
+- resistance to generic-assistant prompting
+- long-range state updates
+
+The manual run also identified transient conversational information as a
+refinement area. Statements such as temporary mood or weather were retained and
+could later be recalled.
+
+The manual evaluation is evidence from representative test conversations, not a
+statistical benchmark. A more extensive automated evaluation harness could
+extend these scenarios with repeatable pass/fail measurements.
+
+---
+
+## Known limitations
+
+- Memory extraction and relationship judgment depend on LLM structured-output
+  quality.
+- Temporary conversational state does not yet have a full retention/decay policy.
+- The prototype is local and single-user by design.
+- Chroma and SQLite are both local stores.
+---
+
+## Project structure
+
+```text
+companion/
 ├── app/
-│   ├── chat.py             # CLI entry point + conversation loop
-│   ├── db.py               # canonical SQLite fact store
-│   ├── llm.py              # reply, extraction, relationship judge
-│   ├── memory_pipeline.py  # retrieval + memory resolution orchestration
-│   ├── persona.py          # static Mira persona
-│   └── vector_store.py     # Chroma semantic retrieval
+│   ├── chat.py
+│   ├── db.py
+│   ├── llm.py
+│   ├── memory_pipeline.py
+│   ├── persona.py
+│   └── vector_store.py
+│
+├── tests/
+│   └── conversations/
+│       └── manual_memory_persona_evaluation.md
 │
 ├── data/
-│   ├── memory.db           # generated; canonical memory state
-│   └── chroma/             # generated; semantic index
+│   └── (generated at runtime)
 │
 ├── README.md
 ├── pyproject.toml
 └── uv.lock
 ```
-
----
