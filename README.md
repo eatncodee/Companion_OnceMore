@@ -367,12 +367,11 @@ Redis was considered for caching/session infrastructure in an earlier scale-orie
 
 # Known limitations
 
-1. **Decay is not implemented as a general forgetting policy yet.** The schema has `time_bound` / `expires_at` support, but this prototype does not claim a learned decay curve.
-2. **Extraction is still model-dependent.** Canonical predicates reduce drift, but an LLM can still extract the wrong fact.
-3. **Relationship judgment is model-dependent.** Edge cases between duplicate/update/contradiction/unrelated still need evaluation.
-4. **Newest-wins is intentionally simple.** A real product could use confidence, evidence/source weighting, or user confirmation.
-5. **The system is single-user.** No auth, billing, multi-user state isolation, or production infrastructure is implemented because those are outside scope.
-6. **No evaluation results are included yet.** The core storage model is already instrumented for evaluation through active facts, supersession chains, and the contradiction log.
+1. **Extraction is still model-dependent.** Canonical predicates reduce drift, but an LLM can still extract the wrong fact.
+2. **Relationship judgment is model-dependent.** Edge cases between duplicate/update/contradiction/unrelated still need evaluation.
+3. **Newest-wins is intentionally simple.** A real product could use confidence, evidence/source weighting, or user confirmation.
+4. **The system is single-user.** No auth, billing, multi-user state isolation, or production infrastructure is implemented because those are outside scope.
+5. **No evaluation results are included yet.** The core storage model is already instrumented for evaluation through active facts, supersession chains, and the contradiction log.
 
 ---
 
