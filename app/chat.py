@@ -24,11 +24,11 @@ def main():
     persona_block = persona.render_persona_block()
     history = []
 
-    print(f"\n({persona_block.splitlines()[0]} is here...(Ctrl+C to leave.)\n")
+    print(f"\n{persona_block.splitlines()[0]} is here...(Ctrl+C to leave)")
 
     while True:
         try:
-            user_message = input("Type your message : ").strip()
+            user_message = input("you -> ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\n(session ended — memory persisted to disk)")
             break
