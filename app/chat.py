@@ -7,7 +7,6 @@ process memory; data/memory.db and data/chroma/ are the source of truth.
 """
 
 import os
-import threading
 from dotenv import load_dotenv
 from . import db
 from . import vector_store
@@ -16,31 +15,28 @@ from . import persona
 from . import llm
 
 
-def get_turn_number() -> int:
-    facts = db.get_active_facts()
-    return (max((f["created_turn"] for f in facts), default=0)) + 1
-
-
 def main():
+    load_dotenv()
     os.makedirs("data", exist_ok=True)
     db.init_db()
     vector_store.get_collection()  # ensure collection exists
 
     persona_block = persona.render_persona_block()
     history = []
-    turn = get_turn_number()
 
-    print(f"({persona_block.splitlines()[0]} is here. Ctrl+C to leave.)\n")
+    print(f"\n({persona_block.splitlines()[0]} is here...(Ctrl+C to leave.)\n")
 
     while True:
         try:
-            user_message = input("you: ").strip()
+            user_message = input("Type your message : ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\n(session ended — memory persisted to disk)")
             break
 
         if not user_message:
             continue
+
+        turn = db.next_turn()
 
         # --- HOT PATH: retrieve -> generate -> show. No LLM judging here. ---
         memory_block = memory_pipeline.retrieve_memory_block(user_message)
@@ -50,15 +46,9 @@ def main():
         history.append({"role": "user", "content": user_message})
         history.append({"role": "assistant", "content": reply})
 
-        # --- COLD PATH: extract/classify/resolve/store, off the critical path ---
-        t = threading.Thread(
-            target=memory_pipeline.process_turn_memory,
-            args=(user_message, turn),
-            daemon=True,
-        )
-        t.start()
-
-        turn += 1
+        # CORRECTNESS FIRST: memory is part of the durable state, so do not
+        # fire-and-forget it. Latency optimization is outside this assessment's scope.
+        memory_pipeline.process_turn_memory(user_message, turn)
 
 
 if __name__ == "__main__":

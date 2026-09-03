@@ -1,19 +1,10 @@
 """
-LLM calls, kept to exactly two shapes:
+LLM calls for the companion.
 
-1. generate_reply()   — the hot path. Persona + retrieved memory -> reply.
-2. extract_facts()    — the cold path. One structured-output call that does
-                         extraction AND classification together, instead of
-                         two separate round trips.
-3. judge_conflict()   — cold path, only called when a candidate fact is
-                         similar to an existing one. Decides update vs
-                         contradiction vs unrelated.
-
-Model choice: Gemini, via the google-genai SDK, using forced function
-calling (tool_config mode=ANY) for structured output on extract/judge —
-the equivalent of Anthropic's forced tool_choice. Swap MODEL below or the
-client construction if you'd rather use a different provider — nothing
-else in the pipeline depends on which LLM backs these three functions.
+The memory extractor emits canonical predicates so the database can resolve
+most updates deterministically by (subject, predicate). Semantic retrieval is
+kept as a fallback for wording/extraction drift, and the judge is called only
+for candidate pairs that need a relationship decision.
 """
 
 import os
@@ -25,6 +16,25 @@ load_dotenv()
 
 MODEL = "gemini-3.5-flash-lite"
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+
+CANONICAL_PREDICATES = [
+    "name",
+    "current_location",
+    "current_job",
+    "current_employer",
+    "relationship_status",
+    "favorite_language",
+    "current_project",
+    "learning_topic",
+    "goal",
+    "plan",
+    "preference",
+    "interest",
+    "opinion",
+    "relationship",
+    "event",
+    "other",
+]
 
 
 def generate_reply(persona_block: str, memory_block: str, history: list, user_message: str) -> str:
@@ -49,7 +59,7 @@ def generate_reply(persona_block: str, memory_block: str, history: list, user_me
 
 EXTRACT_TOOL = types.FunctionDeclaration(
     name="record_facts",
-    description="Record memory-worthy facts extracted from the user's message.",
+    description="Record only memory-worthy facts directly stated by the user.",
     parameters={
         "type": "OBJECT",
         "properties": {
@@ -58,8 +68,14 @@ EXTRACT_TOOL = types.FunctionDeclaration(
                 "items": {
                     "type": "OBJECT",
                     "properties": {
-                        "subject": {"type": "STRING"},
-                        "predicate": {"type": "STRING"},
+                        "subject": {
+                            "type": "STRING",
+                            "description": "Canonical subject. Use 'user' for facts about the speaker.",
+                        },
+                        "predicate": {
+                            "type": "STRING",
+                            "enum": CANONICAL_PREDICATES,
+                        },
                         "object": {"type": "STRING"},
                         "text": {"type": "STRING", "description": "one-line natural language fact"},
                         "category": {
@@ -77,14 +93,29 @@ EXTRACT_TOOL = types.FunctionDeclaration(
     },
 )
 
-EXTRACT_SYSTEM = """You extract memory-worthy facts from a single user message in an
-ongoing conversation with a companion AI.
+EXTRACT_SYSTEM = f"""You extract durable memory from one user message.
 
-Only extract facts the user DIRECTLY STATED about themselves, their life, their
-opinions, their plans, or their relationships — never something you inferred,
-guessed, or that the assistant said. If the message has no such fact (small talk,
-a question with no self-disclosure, an off-hand remark with nothing durable in it),
-call the tool with an empty facts list. Do not pad with speculative facts."""
+Only extract facts the user DIRECTLY stated about themselves, their life,
+opinions, plans, or relationships. Never infer facts from questions, context,
+or assistant messages. If there is nothing worth storing, return an empty list.
+
+Use exactly one canonical predicate from this set:
+{', '.join(CANONICAL_PREDICATES)}
+
+Canonicalization rules:
+- Facts about the speaker use subject='user'.
+- 'favorite programming language', 'favourite language', etc. -> predicate='favorite_language'.
+- 'what I am learning' / 'currently learning' -> predicate='learning_topic'.
+- Current states such as where the user lives -> predicate='current_location'.
+- Current job/title -> predicate='current_job'.
+- Employer/company -> predicate='current_employer'.
+- A relationship status such as single/married -> predicate='relationship_status'.
+- A concrete current project -> predicate='current_project'.
+- Use 'preference', 'interest', and 'opinion' for potentially multi-valued information.
+
+Keep object concise. Keep text faithful to what the user said. Do not invent dates.
+Set time_bound=true only for facts that are explicitly temporary or naturally expire;
+otherwise false."""
 
 
 def extract_facts(user_message: str, turn_number: int) -> list:
@@ -112,13 +143,13 @@ def extract_facts(user_message: str, turn_number: int) -> list:
 
 JUDGE_TOOL = types.FunctionDeclaration(
     name="judge",
-    description="Judge the relationship between an old fact and a new candidate fact.",
+    description="Classify the relationship between two candidate facts.",
     parameters={
         "type": "OBJECT",
         "properties": {
             "relationship": {
                 "type": "STRING",
-                "enum": ["same_fact_updated", "contradiction", "unrelated"],
+                "enum": ["duplicate", "update", "contradiction", "unrelated"],
             },
             "reasoning": {"type": "STRING"},
         },
@@ -131,9 +162,12 @@ def judge_conflict(old_fact_text: str, new_fact_text: str) -> dict:
     prompt = (
         f"OLD fact: \"{old_fact_text}\"\n"
         f"NEW fact: \"{new_fact_text}\"\n\n"
-        "Is the NEW fact an update of the same underlying fact (e.g. a status "
-        "change), a contradiction (both claim to be currently true but conflict), "
-        "or unrelated (just semantically similar, not actually connected)?"
+        "Classify the relationship:\n"
+        "- duplicate: same underlying claim, no meaningful change; keep the old row.\n"
+        "- update: same underlying attribute, but the value/status has changed; new replaces old.\n"
+        "- contradiction: the claims are incompatible as current truths; new replaces old and must be logged.\n"
+        "- unrelated: semantically similar wording but different facts; keep both.\n"
+        "Prefer duplicate when the meaning is essentially identical."
     )
     resp = client.models.generate_content(
         model=MODEL,
