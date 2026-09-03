@@ -425,21 +425,3 @@ Companion/
 ```
 
 ---
-
-# Walkthrough / demo flow
-
-The intended 15–20 minute walkthrough is:
-
-1. Explain the structured-memory + semantic-retrieval split.
-2. Give Mira a fact and show it surviving a restart.
-3. Show `Python → Rust` and inspect the supersession in SQLite.
-4. Show that repeating the same fact does not duplicate it.
-5. Ask paraphrased questions and demonstrate selective retrieval.
-6. Explain the failed embedding-only approach and why structural slots fix it.
-7. Show the evaluation harness and numerical results once those are added.
-
-The assessment specifically asks for the working source, a README covering architecture decisions, abandoned approaches, and limitations, plus the evaluation harness/results if completed.
-
-## Submission philosophy
-
-The project is intentionally small. The goal is not to simulate a production-scale companion stack; it is to make the **memory state explicit, persistent, inspectable, and testable**, and to show the engineering reasoning behind it.
