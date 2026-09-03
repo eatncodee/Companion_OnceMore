@@ -36,6 +36,18 @@ CANONICAL_PREDICATES = [
     "other",
 ]
 
+JUDGE_SYSTEM = """You are a memory relationship classifier.
+
+Compare the old fact and the new fact and classify their relationship.
+
+- duplicate: same underlying claim, no meaningful change.
+- update: same underlying attribute, but the current value or state has changed.
+- contradiction: the claims are incompatible as current truths.
+- unrelated: similar wording or topic, but they concern different facts.
+
+Prefer duplicate when the meaning is essentially identical.
+Return the requested structured function call only.
+"""
 
 def generate_reply(persona_block: str, memory_block: str, history: list, user_message: str) -> str:
     system = f"{persona_block}\n\n---\nThings you remember about the user:\n{memory_block}"
@@ -125,9 +137,13 @@ def extract_facts(user_message: str, turn_number: int) -> list:
         config=types.GenerateContentConfig(
             system_instruction=EXTRACT_SYSTEM,
             tools=[types.Tool(function_declarations=[EXTRACT_TOOL])],
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                disable=True
+            ),
             tool_config=types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(
-                    mode="ANY", allowed_function_names=["record_facts"]
+                    mode="ANY",
+                    allowed_function_names=["record_facts"],
                 )
             ),
         ),
@@ -173,7 +189,11 @@ def judge_conflict(old_fact_text: str, new_fact_text: str) -> dict:
         model=MODEL,
         contents=[types.Content(role="user", parts=[types.Part(text=prompt)])],
         config=types.GenerateContentConfig(
+            system_instruction=JUDGE_SYSTEM,
             tools=[types.Tool(function_declarations=[JUDGE_TOOL])],
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                disable=True
+            ),
             tool_config=types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(
                     mode="ANY", allowed_function_names=["judge"]
